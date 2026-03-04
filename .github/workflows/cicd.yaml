@@ -45,7 +45,7 @@ jobs:
       - name: Build + Push
         env:
           AWS_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPO }}
         run: |
           set -e
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)

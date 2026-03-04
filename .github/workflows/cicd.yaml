@@ -16,7 +16,6 @@ jobs:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
-
       - name: Docker build (smoke)
         run: docker build -t rag-api:ci .
 
@@ -25,9 +24,6 @@ jobs:
     if: github.ref == 'refs/heads/main'
     needs: ci
     runs-on: self-hosted
-
-    permissions:
-      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -40,46 +36,45 @@ jobs:
           aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
 
       - name: Login to ECR
+        id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build + Push
         env:
-          AWS_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
           ECR_REPOSITORY: ${{ secrets.ECR_REPO }}
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
           set -e
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          ECR_URI="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY"
           IMAGE_TAG="${GITHUB_SHA}"
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-          echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
-          docker build -t "$ECR_URI:$IMAGE_TAG" .
-          docker push "$ECR_URI:$IMAGE_TAG"
+          docker build -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
 
-          docker tag "$ECR_URI:$IMAGE_TAG" "$ECR_URI:latest"
-          docker push "$ECR_URI:latest"
+          docker tag "$IMAGE_URI" "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
 
       - name: Deploy (restart container)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -e
 
-          # Stop/remove old container if exists
           if [ "$(docker ps -aq -f name=^${CONTAINER_NAME}$)" ]; then
             docker stop "$CONTAINER_NAME" || true
             docker rm "$CONTAINER_NAME" || true
           fi
 
-          docker pull "$ECR_URI:$IMAGE_TAG"
+          docker pull "$IMAGE_URI"
 
-          # Run (NO persistence)
           docker run -d \
             --name "$CONTAINER_NAME" \
             --restart unless-stopped \
             -p "$HOST_PORT:$APP_PORT" \
-            -e OPENAI_API_KEY='${{ secrets.OPENAI_API_KEY }}' \
-            -e RAG_DATA_DIR='rag_store' \
-            "$ECR_URI:$IMAGE_TAG"
+            -e OPENAI_API_KEY="$OPENAI_API_KEY" \
+            -e RAG_DATA_DIR="rag_store" \
+            "$IMAGE_URI"
 
           docker ps --filter "name=$CONTAINER_NAME"
